@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  loki-ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loki-ingest
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - MAX_CONNECTIONS=500
+      - LOKI_URL=${LOKI_URL:-http://localhost:3100}
+      - LOKI_BATCH_SIZE=100
+      - LOKI_BATCH_WAIT=5s
+      - LOKI_DEFAULT_JOB_LABEL=loki-ingest
+      - LOKI_DEFAULT_INSTANCE_LABEL=${INSTANCE_LABEL:-docker}
+    restart: unless-stopped
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge

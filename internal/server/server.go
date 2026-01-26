@@ -1,0 +1,235 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/Norgate-AV/loki-ingest/internal/config"
+	"github.com/Norgate-AV/loki-ingest/internal/loki"
+	"github.com/Norgate-AV/loki-ingest/internal/processor"
+
+	"github.com/gorilla/websocket"
+	"github.com/rs/zerolog/log"
+)
+
+// WebSocketServer manages WebSocket connections and message processing
+type WebSocketServer struct {
+	config     *config.Config
+	lokiClient *loki.Client
+	upgrader   websocket.Upgrader
+	processor  *processor.LogProcessor
+
+	// Connection management
+	connections map[*websocket.Conn]bool
+	connMutex   sync.RWMutex
+	connCount   int32
+
+	// Shutdown management
+	shutdownChan chan struct{}
+	wg           sync.WaitGroup
+}
+
+// NewWebSocketServer creates a new WebSocket server instance
+func NewWebSocketServer(cfg *config.Config, lokiClient *loki.Client) *WebSocketServer {
+	return &WebSocketServer{
+		config:       cfg,
+		lokiClient:   lokiClient,
+		processor:    processor.NewLogProcessor(),
+		connections:  make(map[*websocket.Conn]bool),
+		shutdownChan: make(chan struct{}),
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  cfg.ReadBufferSize,
+			WriteBufferSize: cfg.WriteBufferSize,
+			CheckOrigin: func(r *http.Request) bool {
+				// In production, implement proper origin checking
+				return true
+			},
+		},
+	}
+}
+
+// HandleWebSocket handles incoming WebSocket connection requests
+func (s *WebSocketServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Check connection limit
+	s.connMutex.RLock()
+	currentConnections := len(s.connections)
+	s.connMutex.RUnlock()
+
+	if currentConnections >= s.config.MaxConnections {
+		log.Warn().
+			Int("current", currentConnections).
+			Int("max", s.config.MaxConnections).
+			Msg("Connection limit reached, rejecting new connection")
+		http.Error(w, "Connection limit reached", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Upgrade HTTP connection to WebSocket
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to upgrade connection")
+		return
+	}
+
+	// Register connection
+	s.connMutex.Lock()
+	s.connections[conn] = true
+	connCount := len(s.connections)
+	s.connMutex.Unlock()
+
+	log.Info().
+		Str("remote_addr", r.RemoteAddr).
+		Int("total_connections", connCount).
+		Msg("New WebSocket connection established")
+
+	// Handle connection in a goroutine
+	s.wg.Add(1)
+	go s.handleConnection(conn, r.RemoteAddr)
+}
+
+// handleConnection processes messages from a WebSocket connection
+func (s *WebSocketServer) handleConnection(conn *websocket.Conn, remoteAddr string) {
+	defer s.wg.Done()
+	defer func() {
+		// Unregister connection
+		s.connMutex.Lock()
+		delete(s.connections, conn)
+		connCount := len(s.connections)
+		s.connMutex.Unlock()
+
+		conn.Close()
+		log.Info().
+			Str("remote_addr", remoteAddr).
+			Int("remaining_connections", connCount).
+			Msg("WebSocket connection closed")
+	}()
+
+	// Configure connection
+	conn.SetReadLimit(s.config.MaxMessageSize)
+	conn.SetReadDeadline(time.Now().Add(s.config.PongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(s.config.PongWait))
+		return nil
+	})
+
+	// Start ping ticker
+	ticker := time.NewTicker(s.config.PingInterval)
+	defer ticker.Stop()
+
+	// Ping sender goroutine
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(s.config.WriteWait))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			case <-s.shutdownChan:
+				return
+			}
+		}
+	}()
+
+	// Read messages
+	for {
+		select {
+		case <-s.shutdownChan:
+			return
+		default:
+			messageType, message, err := conn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Error().Err(err).Str("remote_addr", remoteAddr).Msg("WebSocket error")
+				}
+
+				return
+			}
+
+			if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
+				s.processMessage(message, remoteAddr)
+			}
+		}
+	}
+}
+
+// processMessage processes a received log message
+func (s *WebSocketServer) processMessage(message []byte, source string) {
+	// Parse the JSON log
+	var logEntry processor.ControlSystemLogEntry
+	if err := json.Unmarshal(message, &logEntry); err != nil {
+		log.Warn().
+			Err(err).
+			Str("source", source).
+			Str("raw_message", string(message)).
+			Msg("Failed to parse log message")
+
+		return
+	}
+
+	// Process and enrich the log entry
+	processedLog := s.processor.ProcessControlSystem(&logEntry, source)
+
+	// Send to Loki
+	if err := s.lokiClient.Push(processedLog); err != nil {
+		log.Error().
+			Err(err).
+			Str("source", source).
+			Msg("Failed to push log to Loki")
+	}
+}
+
+// Shutdown gracefully shuts down the WebSocket server
+func (s *WebSocketServer) Shutdown(ctx context.Context) {
+	log.Info().Msg("Initiating WebSocket server shutdown")
+
+	// Signal all goroutines to stop
+	close(s.shutdownChan)
+
+	// Close all active connections
+	s.connMutex.Lock()
+	for conn := range s.connections {
+		conn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server shutting down"),
+			time.Now().Add(s.config.WriteWait),
+		)
+
+		conn.Close()
+	}
+
+	s.connMutex.Unlock()
+
+	// Wait for all connection handlers to finish
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Info().Msg("All WebSocket connections closed gracefully")
+	case <-ctx.Done():
+		log.Warn().Msg("Shutdown timeout exceeded, forcing close")
+	}
+}
+
+// HandleReady returns readiness status
+func (s *WebSocketServer) HandleReady(w http.ResponseWriter, r *http.Request) {
+	s.connMutex.RLock()
+	connCount := len(s.connections)
+	s.connMutex.RUnlock()
+
+	response := map[string]any{
+		"ready":           true,
+		"connections":     connCount,
+		"max_connections": s.config.MaxConnections,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
