@@ -176,6 +176,106 @@ func TestMessageProcessing(t *testing.T) {
 	// it was sent to Loki without mocking, but we can verify no connection errors)
 }
 
+func TestGenericLogProcessing(t *testing.T) {
+	server := createTestServer()
+
+	testServer := httptest.NewServer(http.HandlerFunc(server.HandleWebSocket))
+	defer testServer.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(testServer.URL, "http")
+
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer ws.Close()
+
+	// Send a generic log entry with app field
+	logEntry := map[string]any{
+		"timestamp": "2026-01-27T10:30:00Z",
+		"level":     "info",
+		"message":   "Test generic log message",
+		"app":       "test-app",
+		"env":       "production",
+		"host":      "test-server",
+	}
+
+	data, err := json.Marshal(logEntry)
+	require.NoError(t, err)
+
+	err = ws.WriteMessage(websocket.TextMessage, data)
+	assert.NoError(t, err, "Should be able to send generic log message")
+
+	// Give server time to process
+	time.Sleep(100 * time.Millisecond)
+
+	// Message should be processed without error
+}
+
+func TestIsControlSystemLog(t *testing.T) {
+	server := createTestServer()
+
+	tests := []struct {
+		name     string
+		logData  map[string]any
+		expected bool
+	}{
+		{
+			name: "Control system log with client",
+			logData: map[string]any{
+				"client":  "test-client",
+				"message": "test",
+			},
+			expected: true,
+		},
+		{
+			name: "Control system log with roomName",
+			logData: map[string]any{
+				"roomName": "conference-room",
+				"message":  "test",
+			},
+			expected: true,
+		},
+		{
+			name: "Control system log with systemType",
+			logData: map[string]any{
+				"systemType": "NetLinx",
+				"message":    "test",
+			},
+			expected: true,
+		},
+		{
+			name: "Generic log with app",
+			logData: map[string]any{
+				"app":     "my-app",
+				"message": "test",
+				"level":   "info",
+			},
+			expected: false,
+		},
+		{
+			name: "Generic log with service",
+			logData: map[string]any{
+				"service": "api-server",
+				"message": "test",
+			},
+			expected: false,
+		},
+		{
+			name: "Empty log",
+			logData: map[string]any{
+				"message": "test",
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := server.isControlSystemLog(tt.logData)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestInvalidJSON(t *testing.T) {
 	server := createTestServer()
 

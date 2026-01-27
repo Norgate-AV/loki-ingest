@@ -158,9 +158,9 @@ func (s *WebSocketServer) handleConnection(conn *websocket.Conn, remoteAddr stri
 
 // processMessage processes a received log message
 func (s *WebSocketServer) processMessage(message []byte, source string) {
-	// Parse the JSON log
-	var logEntry processor.ControlSystemLogEntry
-	if err := json.Unmarshal(message, &logEntry); err != nil {
+	// First, try to parse as a generic map to detect the log type
+	var rawLog map[string]any
+	if err := json.Unmarshal(message, &rawLog); err != nil {
 		log.Warn().
 			Err(err).
 			Str("source", source).
@@ -170,8 +170,31 @@ func (s *WebSocketServer) processMessage(message []byte, source string) {
 		return
 	}
 
-	// Process and enrich the log entry
-	processedLog := s.processor.ProcessControlSystem(&logEntry, source)
+	var processedLog *processor.LogEntry
+	var logType string
+
+	// Detect if this is a control system log by checking for control system-specific fields
+	if s.isControlSystemLog(rawLog) {
+		var csEntry processor.ControlSystemLogEntry
+		if err := json.Unmarshal(message, &csEntry); err != nil {
+			log.Warn().
+				Err(err).
+				Str("source", source).
+				Msg("Failed to parse control system log")
+			return
+		}
+		processedLog = s.processor.ProcessControlSystem(&csEntry, source)
+		logType = "control_system"
+	} else {
+		// Process as generic log
+		processedLog = s.processor.Process(rawLog, source)
+		logType = "generic"
+	}
+
+	log.Info().
+		Str("source", source).
+		Str("type", logType).
+		Msg("Log message received and processed")
 
 	// Send to Loki
 	if err := s.lokiClient.Push(processedLog); err != nil {
@@ -180,6 +203,17 @@ func (s *WebSocketServer) processMessage(message []byte, source string) {
 			Str("source", source).
 			Msg("Failed to push log to Loki")
 	}
+}
+
+// isControlSystemLog detects if a log entry is a control system log
+func (s *WebSocketServer) isControlSystemLog(logData map[string]any) bool {
+	// Check for control system-specific fields
+	_, hasClient := logData["client"]
+	_, hasRoomName := logData["roomName"]
+	_, hasSystemType := logData["systemType"]
+
+	// If it has any control system-specific fields, treat it as a control system log
+	return hasClient || hasRoomName || hasSystemType
 }
 
 // Shutdown gracefully shuts down the WebSocket server

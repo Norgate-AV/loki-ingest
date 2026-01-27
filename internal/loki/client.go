@@ -51,6 +51,13 @@ func NewClient(cfg *config.Config) *Client {
 		stopChan:  make(chan struct{}),
 	}
 
+	log.Info().
+		Str("loki_url", cfg.LokiURL).
+		Int("batch_size", cfg.LokiBatchSize).
+		Dur("batch_wait", cfg.LokiBatchWait).
+		Int("channel_size", cfg.MessageChannelSize).
+		Msg("Loki client initialized")
+
 	// Start batch processor
 	client.wg.Add(1)
 	go client.batchProcessor()
@@ -67,10 +74,13 @@ func (c *Client) Push(entry *processor.LogEntry) error {
 		return fmt.Errorf("client is shutting down")
 	default:
 		// Channel is full, log warning and try with timeout
+		log.Warn().Msg("Batch channel full, attempting to queue with timeout")
 		select {
 		case c.batchChan <- entry:
+			log.Info().Msg("Log entry queued after wait")
 			return nil
 		case <-time.After(1 * time.Second):
+			log.Error().Msg("Batch channel full, log entry dropped")
 			return fmt.Errorf("batch channel full, entry dropped")
 		}
 	}
@@ -163,7 +173,7 @@ func (c *Client) sendBatch(entries []*processor.LogEntry) {
 			Int("batch_size", len(entries)).
 			Msg("Failed to send batch to Loki after retries")
 	} else {
-		log.Debug().
+		log.Info().
 			Int("batch_size", len(entries)).
 			Int("streams", len(streamSlice)).
 			Msg("Successfully sent batch to Loki")
