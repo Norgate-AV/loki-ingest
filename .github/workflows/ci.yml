@@ -103,7 +103,7 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
+            type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
@@ -142,10 +142,10 @@ jobs:
           # Get the tag name
           TAG_NAME=${GITHUB_REF#refs/tags/}
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          
+
           # Get previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
+
           # Generate changelog
           if [ -n "$PREV_TAG" ]; then
             echo "## Changes since $PREV_TAG" > RELEASE_NOTES.md
@@ -154,7 +154,7 @@ jobs:
           else
             echo "## Initial Release" > RELEASE_NOTES.md
           fi
-          
+
           echo "" >> RELEASE_NOTES.md
           echo "## Docker Images" >> RELEASE_NOTES.md
           echo "" >> RELEASE_NOTES.md
