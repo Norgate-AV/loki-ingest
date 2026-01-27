@@ -142,7 +142,12 @@ func (s *WebSocketServer) handleConnection(conn *websocket.Conn, remoteAddr stri
 		default:
 			messageType, message, err := conn.ReadMessage()
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				// Only log unexpected close errors (exclude normal close, going away, no status)
+				if websocket.IsUnexpectedCloseError(err,
+					websocket.CloseGoingAway,
+					websocket.CloseAbnormalClosure,
+					websocket.CloseNormalClosure,
+					websocket.CloseNoStatusReceived) {
 					log.Error().Err(err).Str("remote_addr", remoteAddr).Msg("WebSocket error")
 				}
 
@@ -191,10 +196,33 @@ func (s *WebSocketServer) processMessage(message []byte, source string) {
 		logType = "generic"
 	}
 
-	log.Info().
+	// Extract common fields for logging
+	logEvent := log.Info().
 		Str("source", source).
-		Str("type", logType).
-		Msg("Log message received and processed")
+		Str("type", logType)
+
+	// Add level if present
+	if level, ok := rawLog["level"].(string); ok {
+		logEvent = logEvent.Str("log_level", level)
+	}
+
+	// Add app/service if present
+	if app, ok := rawLog["app"].(string); ok && app != "" {
+		logEvent = logEvent.Str("app", app)
+	} else if service, ok := rawLog["service"].(string); ok && service != "" {
+		logEvent = logEvent.Str("app", service)
+	}
+
+	// Add message preview (truncate if too long)
+	if msg, ok := rawLog["message"].(string); ok {
+		if len(msg) > 100 {
+			logEvent = logEvent.Str("message", msg[:100]+"...")
+		} else {
+			logEvent = logEvent.Str("message", msg)
+		}
+	}
+
+	logEvent.Msg("Log message received and processed")
 
 	// Send to Loki
 	if err := s.lokiClient.Push(processedLog); err != nil {
