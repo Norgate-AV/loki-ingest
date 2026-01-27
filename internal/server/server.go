@@ -216,9 +216,9 @@ func (s *WebSocketServer) processMessage(message []byte, source string) {
 	// Add message preview (truncate if too long)
 	if msg, ok := rawLog["message"].(string); ok {
 		if len(msg) > 100 {
-			logEvent = logEvent.Str("message", msg[:100]+"...")
+			logEvent = logEvent.Str("log_message", msg[:100]+"...")
 		} else {
-			logEvent = logEvent.Str("message", msg)
+			logEvent = logEvent.Str("log_message", msg)
 		}
 	}
 
