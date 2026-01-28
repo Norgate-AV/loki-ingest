@@ -32,6 +32,15 @@ type WebSocketServer struct {
 	wg           sync.WaitGroup
 }
 
+// LogResponse represents the response sent back to the client after processing a log
+type LogResponse struct {
+	Status    string    `json:"status"`            // "success" or "error"
+	ID        string    `json:"id,omitempty"`      // Log ID if present
+	Timestamp time.Time `json:"timestamp"`         // When the log was processed
+	Type      string    `json:"type,omitempty"`    // Log type (control_system or generic)
+	Message   string    `json:"message,omitempty"` // Error message if status is error
+}
+
 // NewWebSocketServer creates a new WebSocket server instance
 func NewWebSocketServer(cfg *config.Config, lokiClient *loki.Client) *WebSocketServer {
 	return &WebSocketServer{
@@ -155,17 +164,35 @@ func (s *WebSocketServer) handleConnection(conn *websocket.Conn, remoteAddr stri
 			}
 
 			if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
-				s.processMessage(message, remoteAddr)
+				s.processMessage(conn, message, remoteAddr)
 			}
 		}
 	}
 }
 
 // processMessage processes a received log message
-func (s *WebSocketServer) processMessage(message []byte, source string) {
+func (s *WebSocketServer) processMessage(conn *websocket.Conn, message []byte, source string) {
+	// Prepare response
+	response := &LogResponse{
+		Timestamp: time.Now(),
+	}
+
+	// Send response to client at the end
+	defer func() {
+		if err := s.sendResponse(conn, response); err != nil {
+			log.Warn().
+				Err(err).
+				Str("source", source).
+				Msg("Failed to send response to client")
+		}
+	}()
+
 	// First, try to parse as a generic map to detect the log type
 	var rawLog map[string]any
 	if err := json.Unmarshal(message, &rawLog); err != nil {
+		response.Status = "error"
+		response.Message = "Failed to parse log message: " + err.Error()
+
 		log.Warn().
 			Err(err).
 			Str("source", source).
@@ -182,6 +209,9 @@ func (s *WebSocketServer) processMessage(message []byte, source string) {
 	if s.isControlSystemLog(rawLog) {
 		var csEntry processor.ControlSystemLogEntry
 		if err := json.Unmarshal(message, &csEntry); err != nil {
+			response.Status = "error"
+			response.Message = "Failed to parse control system log: " + err.Error()
+
 			log.Warn().
 				Err(err).
 				Str("source", source).
@@ -190,10 +220,17 @@ func (s *WebSocketServer) processMessage(message []byte, source string) {
 		}
 		processedLog = s.processor.ProcessControlSystem(&csEntry, source)
 		logType = "control_system"
+		response.ID = csEntry.ID
+		response.Type = logType
 	} else {
 		// Process as generic log
 		processedLog = s.processor.Process(rawLog, source)
 		logType = "generic"
+		response.Type = logType
+		// Try to extract ID from generic log if present
+		if id, ok := rawLog["id"].(string); ok && id != "" {
+			response.ID = id
+		}
 	}
 
 	// Extract common fields for logging
@@ -226,22 +263,39 @@ func (s *WebSocketServer) processMessage(message []byte, source string) {
 
 	// Send to Loki
 	if err := s.lokiClient.Push(processedLog); err != nil {
+		response.Status = "error"
+		response.Message = "Failed to push log to Loki: " + err.Error()
+
 		log.Error().
 			Err(err).
 			Str("source", source).
 			Msg("Failed to push log to Loki")
+		return
 	}
+
+	// Success
+	response.Status = "success"
+}
+
+// sendResponse sends a JSON response back to the client via WebSocket
+func (s *WebSocketServer) sendResponse(conn *websocket.Conn, response *LogResponse) error {
+	conn.SetWriteDeadline(time.Now().Add(s.config.WriteWait))
+	data, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	return conn.WriteMessage(websocket.TextMessage, data)
 }
 
 // isControlSystemLog detects if a log entry is a control system log
 func (s *WebSocketServer) isControlSystemLog(logData map[string]any) bool {
 	// Check for control system-specific fields
-	_, hasClient := logData["client"]
+	_, hasClientID := logData["clientId"]
 	_, hasRoomName := logData["roomName"]
 	_, hasSystemType := logData["systemType"]
 
 	// If it has any control system-specific fields, treat it as a control system log
-	return hasClient || hasRoomName || hasSystemType
+	return hasClientID || hasRoomName || hasSystemType
 }
 
 // Shutdown gracefully shuts down the WebSocket server

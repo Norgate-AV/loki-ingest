@@ -221,8 +221,8 @@ func TestIsControlSystemLog(t *testing.T) {
 		{
 			name: "Control system log with client",
 			logData: map[string]any{
-				"client":  "test-client",
-				"message": "test",
+				"clientId": "test-client",
+				"message":  "test",
 			},
 			expected: true,
 		},
@@ -414,3 +414,126 @@ func TestConnectionCleanupOnClientDisconnect(t *testing.T) {
 
 	assert.Equal(t, 0, finalCount, "Server should cleanup disconnected connection")
 }
+
+func TestWebSocketResponses(t *testing.T) {
+	server := createTestServer()
+	testServer := httptest.NewServer(http.HandlerFunc(server.HandleWebSocket))
+	defer testServer.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(testServer.URL, "http")
+
+	tests := []struct {
+		name            string
+		logEntry        any
+		expectedStatus  string
+		expectedType    string
+		expectID        bool
+		expectMessage   bool
+		expectTimestamp bool
+	}{
+		{
+			name: "successful control system log with ID",
+			logEntry: processor.ControlSystemLogEntry{
+				ID:       "test-uuid-123",
+				ClientID: "test-client",
+				HostName: "test-host",
+				RoomName: "test-room",
+				Level:    "info",
+				Message:  "Test message",
+			},
+			expectedStatus:  "success",
+			expectedType:    "control_system",
+			expectID:        true,
+			expectTimestamp: true,
+		},
+		{
+			name: "successful generic log with ID",
+			logEntry: map[string]any{
+				"id":      "generic-uuid-456",
+				"app":     "test-app",
+				"level":   "info",
+				"message": "Generic log message",
+			},
+			expectedStatus:  "success",
+			expectedType:    "generic",
+			expectID:        true,
+			expectTimestamp: true,
+		},
+		{
+			name: "successful generic log without ID",
+			logEntry: map[string]any{
+				"service": "test-service",
+				"level":   "warn",
+				"message": "Warning message",
+			},
+			expectedStatus:  "success",
+			expectedType:    "generic",
+			expectID:        false,
+			expectTimestamp: true,
+		},
+		{
+			name:            "invalid JSON",
+			logEntry:        "not valid json at all {{{",
+			expectedStatus:  "error",
+			expectMessage:   true,
+			expectTimestamp: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+			require.NoError(t, err)
+			defer ws.Close()
+
+			// Send log entry
+			var data []byte
+			if strVal, ok := tt.logEntry.(string); ok {
+				data = []byte(strVal)
+			} else {
+				data, err = json.Marshal(tt.logEntry)
+				require.NoError(t, err)
+			}
+
+			err = ws.WriteMessage(websocket.TextMessage, data)
+			require.NoError(t, err)
+
+			// Read response
+			ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+			_, responseData, err := ws.ReadMessage()
+			require.NoError(t, err, "Should receive response from server")
+
+			// Parse response
+			var response LogResponse
+			err = json.Unmarshal(responseData, &response)
+			require.NoError(t, err, "Response should be valid JSON")
+
+			// Verify response fields
+			assert.Equal(t, tt.expectedStatus, response.Status, "Response status should match")
+
+			if tt.expectedType != "" {
+				assert.Equal(t, tt.expectedType, response.Type, "Response type should match")
+			}
+
+			if tt.expectID {
+				assert.NotEmpty(t, response.ID, "Response should include log ID")
+			}
+
+			if tt.expectMessage {
+				assert.NotEmpty(t, response.Message, "Response should include error message")
+			}
+
+			if tt.expectTimestamp {
+				assert.False(t, response.Timestamp.IsZero(), "Response should include timestamp")
+				assert.WithinDuration(t, time.Now(), response.Timestamp, 2*time.Second,
+					"Response timestamp should be recent")
+			}
+		})
+	}
+}
+
+// Note: We don't test Loki push failures in the WebSocket response because
+// the Loki client pushes asynchronously via a channel. The response is sent
+// immediately after queuing the message, not after the actual HTTP push to Loki.
+// This is by design for performance - we don't want to block WebSocket responses
+// on Loki availability.
