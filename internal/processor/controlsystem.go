@@ -9,8 +9,8 @@ import (
 type ControlSystemLogEntry struct {
 	ID              string `json:"id"`
 	Timestamp       string `json:"timestamp"`
-	Client          string `json:"client"`
-	Hostname        string `json:"hostname"`
+	ClientID        string `json:"clientId"`
+	HostName        string `json:"hostName"`
 	RoomName        string `json:"roomName"`
 	Level           string `json:"level"`
 	Message         string `json:"message"`
@@ -39,12 +39,12 @@ func (p *LogProcessor) ProcessControlSystem(entry *ControlSystemLogEntry, source
 		logEntry.Labels["level"] = entry.Level
 	}
 
-	if entry.Client != "" {
-		logEntry.Labels["client"] = entry.Client
+	if entry.ClientID != "" {
+		logEntry.Labels["client"] = entry.ClientID
 	}
 
-	if entry.Hostname != "" {
-		logEntry.Labels["host"] = entry.Hostname
+	if entry.HostName != "" {
+		logEntry.Labels["host"] = entry.HostName
 	}
 
 	if entry.RoomName != "" {
@@ -83,5 +83,5 @@ func (p *LogProcessor) buildControlSystemLogLine(entry *ControlSystemLogEntry) s
 	}
 
 	// Fallback to a generic representation
-	return fmt.Sprintf("%sControl system log: client=%s, room=%s", prefix, entry.Client, entry.RoomName)
+	return fmt.Sprintf("%sControl system log: client=%s, room=%s", prefix, entry.ClientID, entry.RoomName)
 }

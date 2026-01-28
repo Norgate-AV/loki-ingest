@@ -24,8 +24,8 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 			entry: &ControlSystemLogEntry{
 				ID:        "550e8400-e29b-41d4-a716-446655440000",
 				Timestamp: "2026-01-26T10:30:00Z",
-				Client:    "processor-01",
-				Hostname:  "control-room-1",
+				ClientID:  "processor-01",
+				HostName:  "control-room-1",
 				RoomName:  "conference-a",
 				Level:     "info",
 				Message:   "System initialized successfully",
@@ -44,8 +44,8 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 			name: "entry without UUID",
 			entry: &ControlSystemLogEntry{
 				Timestamp: "2026-01-26T10:30:00Z",
-				Client:    "processor-02",
-				Hostname:  "control-room-2",
+				ClientID:  "processor-02",
+				HostName:  "control-room-2",
 				RoomName:  "lobby",
 				Level:     "warn",
 				Message:   "Temperature threshold exceeded",
@@ -65,8 +65,8 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 			entry: &ControlSystemLogEntry{
 				ID:              "123e4567-e89b-12d3-a456-426614174000",
 				Timestamp:       "2026-01-26T10:30:00Z",
-				Client:          "crestron-main",
-				Hostname:        "cp4-server",
+				ClientID:        "crestron-main",
+				HostName:        "cp4-server",
 				RoomName:        "auditorium",
 				Level:           "error",
 				Message:         "Connection timeout",
@@ -91,7 +91,7 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 			name: "entry without message uses fallback format",
 			entry: &ControlSystemLogEntry{
 				ID:       "test-uuid-123",
-				Client:   "netlinx-01",
+				ClientID: "netlinx-01",
 				RoomName: "room-101",
 				Level:    "debug",
 			},
@@ -107,8 +107,8 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 		{
 			name: "minimal entry",
 			entry: &ControlSystemLogEntry{
-				Client:  "minimal-client",
-				Message: "Simple log",
+				ClientID: "minimal-client",
+				Message:  "Simple log",
 			},
 			source:   "minimal-source",
 			wantLine: "Simple log",
@@ -151,8 +151,8 @@ func TestControlSystemLogEntry_Validation(t *testing.T) {
 		{
 			name: "valid entry",
 			entry: &ControlSystemLogEntry{
-				Client:  "test-client",
-				Message: "test message",
+				ClientID: "test-client",
+				Message:  "test message",
 			},
 			valid: true,
 		},
@@ -161,8 +161,8 @@ func TestControlSystemLogEntry_Validation(t *testing.T) {
 			entry: &ControlSystemLogEntry{
 				ID:              "uuid-123",
 				Timestamp:       "2026-01-26T10:30:00Z",
-				Client:          "client",
-				Hostname:        "host",
+				ClientID:        "client",
+				HostName:        "host",
 				RoomName:        "room",
 				Level:           "info",
 				Message:         "message",
@@ -209,7 +209,7 @@ func TestControlSystemTimestampParsing(t *testing.T) {
 			name: "RFC3339 timestamp",
 			entry: &ControlSystemLogEntry{
 				Timestamp: "2026-01-26T10:30:00Z",
-				Client:    "test",
+				ClientID:  "test",
 			},
 			expectSpecific: func() *time.Time {
 				t, _ := time.Parse(time.RFC3339, "2026-01-26T10:30:00Z")
@@ -219,7 +219,7 @@ func TestControlSystemTimestampParsing(t *testing.T) {
 		{
 			name: "no timestamp uses current time",
 			entry: &ControlSystemLogEntry{
-				Client: "test",
+				ClientID: "test",
 			},
 			expectRecent: true,
 		},
@@ -227,7 +227,7 @@ func TestControlSystemTimestampParsing(t *testing.T) {
 			name: "empty timestamp uses current time",
 			entry: &ControlSystemLogEntry{
 				Timestamp: "",
-				Client:    "test",
+				ClientID:  "test",
 			},
 			expectRecent: true,
 		},

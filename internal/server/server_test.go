@@ -156,8 +156,8 @@ func TestMessageProcessing(t *testing.T) {
 	// Send a control system log entry
 	logEntry := processor.ControlSystemLogEntry{
 		ID:       "test-uuid-123",
-		Client:   "test-client",
-		Hostname: "test-host",
+		ClientID: "test-client",
+		HostName: "test-host",
 		RoomName: "test-room",
 		Level:    "info",
 		Message:  "Test message",
