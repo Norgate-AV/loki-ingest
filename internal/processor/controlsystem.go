@@ -32,8 +32,18 @@ func (p *LogProcessor) ProcessControlSystem(entry *ControlSystemLogEntry, source
 		logEntry.Timestamp = p.parseTimestamp(entry.Timestamp)
 	}
 
-	// Set labels from NetLinx fields
+	// Set labels from control system fields
 	logEntry.Labels["source"] = source
+
+	// Set job label based on hostname or room to create separate log streams per system
+	// This overrides any default job label and ensures logs are grouped by system
+	if entry.HostName != "" {
+		logEntry.Labels["job"] = entry.HostName
+		logEntry.Labels["host"] = entry.HostName
+	} else if entry.RoomName != "" {
+		logEntry.Labels["job"] = entry.RoomName
+		logEntry.Labels["room"] = entry.RoomName
+	}
 
 	if entry.Level != "" {
 		logEntry.Labels["level"] = entry.Level
@@ -43,11 +53,8 @@ func (p *LogProcessor) ProcessControlSystem(entry *ControlSystemLogEntry, source
 		logEntry.Labels["client"] = entry.ClientID
 	}
 
-	if entry.HostName != "" {
-		logEntry.Labels["host"] = entry.HostName
-	}
-
-	if entry.RoomName != "" {
+	// Set room label if not already used for job
+	if entry.RoomName != "" && logEntry.Labels["job"] != entry.RoomName {
 		logEntry.Labels["room"] = entry.RoomName
 	}
 
@@ -71,17 +78,11 @@ func (p *LogProcessor) ProcessControlSystem(entry *ControlSystemLogEntry, source
 
 // buildControlSystemLogLine constructs the log line from control system entry
 func (p *LogProcessor) buildControlSystemLogLine(entry *ControlSystemLogEntry) string {
-	// Prepend UUID if present
-	prefix := ""
-	if entry.ID != "" {
-		prefix = fmt.Sprintf("[%s] ", entry.ID)
-	}
-
 	// Use the message if present
 	if entry.Message != "" {
-		return prefix + entry.Message
+		return entry.Message
 	}
 
 	// Fallback to a generic representation
-	return fmt.Sprintf("%sControl system log: client=%s, room=%s", prefix, entry.ClientID, entry.RoomName)
+	return fmt.Sprintf("Control system log: client=%s, room=%s", entry.ClientID, entry.RoomName)
 }

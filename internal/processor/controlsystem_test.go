@@ -31,7 +31,7 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 				Message:   "System initialized successfully",
 			},
 			source:   "192.168.1.100",
-			wantLine: "[550e8400-e29b-41d4-a716-446655440000] System initialized successfully",
+			wantLine: "System initialized successfully",
 			wantLabels: map[string]string{
 				"source": "192.168.1.100",
 				"level":  "info",
@@ -75,7 +75,7 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 				IPAddress:       "10.0.0.50",
 			},
 			source:   "10.0.0.50",
-			wantLine: "[123e4567-e89b-12d3-a456-426614174000] Connection timeout",
+			wantLine: "Connection timeout",
 			wantLabels: map[string]string{
 				"source":           "10.0.0.50",
 				"level":            "error",
@@ -96,7 +96,7 @@ func TestLogProcessor_ProcessControlSystem(t *testing.T) {
 				Level:    "debug",
 			},
 			source:   "test-source",
-			wantLine: "[test-uuid-123] Control system log: client=netlinx-01, room=room-101",
+			wantLine: "Control system log: client=netlinx-01, room=room-101",
 			wantLabels: map[string]string{
 				"source": "test-source",
 				"level":  "debug",
