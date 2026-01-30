@@ -2,6 +2,7 @@ package processor
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -46,7 +47,7 @@ func (p *LogProcessor) ProcessControlSystem(entry *ControlSystemLogEntry, source
 	}
 
 	if entry.Level != "" {
-		logEntry.Labels["level"] = entry.Level
+		logEntry.Labels["level"] = strings.ToLower(entry.Level)
 	}
 
 	if entry.ClientID != "" {

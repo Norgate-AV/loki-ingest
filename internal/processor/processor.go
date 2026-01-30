@@ -2,6 +2,7 @@ package processor
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -44,7 +45,7 @@ func (p *LogProcessor) Process(rawLog map[string]any, source string) *LogEntry {
 
 	// Extract level/severity
 	if level, ok := p.extractString(rawLog, "level", "severity", "loglevel", "log_level"); ok {
-		entry.Labels["level"] = level
+		entry.Labels["level"] = strings.ToLower(level)
 	}
 
 	// Extract application/service name
